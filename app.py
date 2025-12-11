@@ -1,210 +1,261 @@
 import streamlit as st
 import plotly.graph_objects as go
-import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
+import re
 
-# --- CONFIGURATION DU DESIGN ---
-st.set_page_config(page_title="Stratégie & Patrimoine", page_icon="🏦", layout="wide")
+# --- 1. CONFIGURATION & DESIGN ---
+st.set_page_config(page_title="Mon Profil Investisseur", page_icon="💸", layout="centered")
 
-# CSS pour un look moderne
+# CSS pour look moderne (Mode Sombre)
 st.markdown("""
 <style>
-    .main {background-color: #0e1117;}
-    h1 {color: #ffffff; font-family: 'Helvetica Neue', sans-serif;}
-    h2 {color: #e0e0e0; font-weight: 300;}
-    h3 {color: #4da6ff;}
-    .stButton>button {
-        background-color: #4da6ff; color: white; border-radius: 8px; height: 50px; width: 100%; border: none; font-weight: bold;
+    .stApp {background-color: #0e1117;}
+    h1 {color: #ffffff; text-align: center;}
+    h2 {color: #4da6ff;}
+    .big-font {font-size:20px !important;}
+    .stRadio > label {font-size: 18px; font-weight: bold; color: #fff;}
+    div[data-baseweb="select-custom"] {background-color: #1f2937;}
+    .parrain-box {
+        padding: 20px; border-radius: 10px; margin-bottom: 20px;
+        border: 1px solid #333; box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    .stButton>button:hover {background-color: #0066cc;}
-    .parrainage-box {
-        background-color: #1f2937; padding: 20px; border-radius: 10px; border-left: 5px solid #ffd700; margin-bottom: 20px;
-    }
+    .bourso {background-color: #2c0b1e; border-left: 5px solid #d63384;}
+    .fortuneo {background-color: #052c18; border-left: 5px solid #28a745;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- DONNÉES DE PARRAINAGE ---
+# --- 2. DONNÉES PARRAINAGE ---
 PARRAINAGE = {
-    "BoursoBank": {"code": "GASA8477", "montant": "80€ à 150€", "desc": "La banque la moins chère (PEA, Comptes)"},
-    "Fortuneo": {"code": "13528376", "montant": "80€ à 130€", "desc": "Idéal pour l'Assurance Vie et la Gold Mastercard"}
+    "Bourso": {"code": "GASA8477", "prime": "jusqu'à 150€", "desc": "Le top pour le compte courant & PEA (frais mini)."},
+    "Fortuneo": {"code": "13528376", "prime": "jusqu'à 130€", "desc": "La meilleure pour l'Assurance Vie et la Carte Gold."}
 }
 
-# --- LOGIQUE FINANCIÈRE ---
-def obtenir_profil_et_conseils(score, horizon):
-    # Définition du profil avec clés simplifiées pour éviter le crash
-    if score < 25:
-        profil = "Trouillard 🛡️"
-        desc = "La sécurité avant tout. Vous dormez mal si votre argent fluctue."
-        # Clés simples : Securite, Immobilier, Bourse, Crypto
-        alloc = {"Securite": 90, "Immobilier": 10, "Bourse": 0, "Crypto": 0}
-    elif score < 50:
-        profil = "Pépère 🛋️"
-        desc = "Un équilibre sain. Vous voulez battre l'inflation sans trop de risques."
-        alloc = {"Securite": 50, "Immobilier": 30, "Bourse": 15, "Crypto": 5}
-    elif score < 75:
-        profil = "Ambitieux 🚀"
-        desc = "Vous visez la performance long terme et acceptez la volatilité."
+# --- 3. LOGIQUE MÉTIER ---
+
+def nettoyer_texte_pdf(texte):
+    # Enlève les emojis et caractères spéciaux pour le PDF (évite les bugs)
+    return re.sub(r'[^\w\s,.€%:-]', '', texte)
+
+def calculer_resultats(reponses, montant):
+    score = 0
+    
+    # Q1: Horizon (Temps)
+    if "Tout de suite" in reponses['temps']: score += 0
+    elif "3-5 ans" in reponses['temps']: score += 4
+    elif "10 ans" in reponses['temps']: score += 8
+    elif "Retraite" in reponses['temps']: score += 12
+
+    # Q2: Réaction (Psychologie)
+    if "Panique" in reponses['reaction']: score += 0
+    elif "Inquiet" in reponses['reaction']: score += 3
+    elif "Zen" in reponses['reaction']: score += 7
+    elif "Solde" in reponses['reaction']: score += 10
+
+    # Q3: Connaissances
+    if "Néophyte" in reponses['savoir']: score += 0
+    elif "Curieux" in reponses['savoir']: score += 3
+    elif "Averti" in reponses['savoir']: score += 6
+
+    # Détermination Profil
+    if score < 6:
+        profil = "L'Écureuil Prudent 🐿️"
+        alloc = {"Securite": 85, "Immobilier": 15, "Bourse": 0, "Crypto": 0}
+        desc = "Tu ne veux prendre aucun risque. Ton but est de ne jamais perdre 1€."
+    elif score < 14:
+        profil = "Le Stratège Équilibré ⚖️"
+        alloc = {"Securite": 50, "Immobilier": 30, "Bourse": 20, "Crypto": 0}
+        desc = "Tu cherches un rendement correct mais tu veux dormir tranquille."
+    elif score < 22:
+        profil = "L'Investisseur Ambitieux 🚀"
         alloc = {"Securite": 20, "Immobilier": 20, "Bourse": 50, "Crypto": 10}
+        desc = "Tu as du temps devant toi et tu acceptes que ça bouge pour gagner plus."
     else:
-        profil = "Tête Brûlée 🔥"
-        desc = "Le risque est votre ami. Vous cherchez le rendement maximal."
-        alloc = {"Securite": 10, "Immobilier": 10, "Bourse": 50, "Crypto": 30}
+        profil = "La Tête Brûlée 🔥"
+        alloc = {"Securite": 5, "Immobilier": 10, "Bourse": 55, "Crypto": 30}
+        desc = "Le risque ne te fait pas peur. Tu vises la performance maximale."
 
-    # Conseils produits détaillés
+    # Conseils
     conseils = []
+    conseils.append(f"💰 **Épargne de sécurité** : Garde toujours {int(montant*0.1)}€ sur un Livret A dispo.")
     
-    # 1. Épargne de précaution
-    conseils.append("**💰 Épargne de sécurité :** Remplissez Livret A et LDDS avant tout.")
-    
-    # 2. Enveloppes Fiscales (Bourse)
-    # C'est ici que ça plantait avant, maintenant "Bourse" existe tout le temps
     if alloc["Bourse"] > 0:
-        if horizon >= 5:
-            conseils.append(f"**📈 Bourse ({alloc['Bourse']}%):** Ouvrez un **PEA** (Fiscalité douce après 5 ans). Investissez dans des **ETF MSCI World**.")
-        else:
-            conseils.append(f"**📈 Bourse ({alloc['Bourse']}%):** Privilégiez un **CTO** ou une Assurance Vie.")
-
-    # 3. Immobilier
+        conseils.append("📈 **Bourse** : Ouvre un **PEA chez BoursoBank**. Achète un ETF 'MSCI World' (c'est un panier de 1600 entreprises mondiales). Ça monte historiquement de 7%/an en moyenne.")
+    
     if alloc["Immobilier"] > 0:
-        if score > 60:
-            conseils.append(f"**🏢 Immobilier ({alloc['Immobilier']}%):** Regardez le **Crowdfunding Immobilier**.")
+        if score < 15:
+            conseils.append("🏢 **Immobilier** : Achète des parts de **SCPI** (immobilier papier) via une Assurance Vie Fortuneo. C'est de l'immo sans gérer les locataires.")
         else:
-            conseils.append(f"**🏢 Immobilier ({alloc['Immobilier']}%):** Privilégiez les **SCPI** (Pierre-Papier) en Assurance Vie.")
+            conseils.append("🏢 **Immobilier** : Tu peux viser le Crowdfunding (prêter aux promoteurs) pour du 9-10% de rendement.")
 
-    # 4. Crypto
     if alloc["Crypto"] > 0:
-        details = "Bitcoin (BTC) uniquement" if score < 80 else "BTC, ETH et Solana"
-        conseils.append(f"**⚡ Cryptomonnaies ({alloc['Crypto']}%):** {details}. Attention, c'est volatil.")
-
-    conseils.append("**💼 Le Couteau Suisse :** Ouvrez une bonne **Assurance Vie** en ligne (frais < 0.6%).")
+        conseils.append("⚡ **Crypto** : Achète seulement du **Bitcoin (BTC)** et **Ethereum (ETH)**. C'est très risqué, n'y mets que ce que tu es prêt à perdre.")
 
     return profil, desc, alloc, conseils
 
-# --- GÉNÉRATION PDF ---
-def generer_pdf(nom, profil, desc, alloc, conseils):
+# --- 4. GÉNÉRATION PDF ---
+def creer_pdf(profil, desc, alloc, conseils):
     pdf = FPDF()
     pdf.add_page()
     
     def txt(t): return t.encode('latin-1', 'replace').decode('latin-1')
-    
-    # Header
-    pdf.set_font("Arial", 'B', 20)
-    pdf.set_text_color(33, 37, 41)
-    pdf.cell(0, 15, txt("Bilan Patrimonial & Stratégie"), 0, 1, 'C')
-    pdf.set_font("Arial", 'I', 10)
-    pdf.cell(0, 10, txt(f"Généré le {datetime.now().strftime('%d/%m/%Y')}"), 0, 1, 'C')
-    pdf.ln(5)
 
+    # Titre
+    pdf.set_font("Arial", 'B', 24)
+    pdf.cell(0, 20, txt("Mon Plan d'Action Financier"), 0, 1, 'C')
+    
     # Profil
-    pdf.set_fill_color(240, 240, 240)
-    pdf.rect(10, 35, 190, 30, 'F')
+    pdf.set_fill_color(230, 230, 230)
+    pdf.rect(10, 30, 190, 25, 'F')
+    pdf.set_y(35)
     pdf.set_font("Arial", 'B', 16)
-    pdf.set_text_color(0, 102, 204)
-    pdf.set_xy(15, 40)
-    pdf.cell(0, 10, txt(f"Votre Profil : {profil}"), 0, 1)
-    pdf.set_font("Arial", '', 11)
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_xy(15, 50)
-    pdf.multi_cell(180, 5, txt(desc))
-    
-    pdf.set_y(75)
+    pdf.set_text_color(0, 50, 100)
+    pdf.cell(0, 10, txt(f"Mon Profil : {nettoyer_texte_pdf(profil)}"), 0, 1, 'C')
+    pdf.set_font("Arial", 'I', 11)
+    pdf.set_text_color(50, 50, 50)
+    pdf.cell(0, 10, txt(nettoyer_texte_pdf(desc)), 0, 1, 'C')
 
-    # Offres Parrainage
+    pdf.ln(15)
+
+    # Parrainage (Gros pavé)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, txt("🎁 VOS OFFRES DE BIENVENUE"), 0, 1, 'L')
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 10, txt("Où ouvrir mes comptes ? (Codes Parrainage)"), 0, 1)
     
     pdf.set_font("Arial", '', 11)
-    y_pos = pdf.get_y()
+    # Bourso
+    pdf.set_text_color(180, 0, 80)
+    pdf.cell(0, 8, txt(f"1. POUR LA BANQUE & BOURSE : BoursoBank"), 0, 1)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, txt(f"   CODE : {PARRAINAGE['Bourso']['code']}  ({PARRAINAGE['Bourso']['prime']})"), 0, 1)
     
-    # Boite Bourso
-    pdf.set_fill_color(255, 245, 245)
-    pdf.rect(10, y_pos, 90, 35, 'F')
-    pdf.set_xy(15, y_pos+5)
+    # Fortuneo
+    pdf.set_font("Arial", '', 11)
+    pdf.set_text_color(0, 100, 50)
+    pdf.cell(0, 8, txt(f"2. POUR L'ASSURANCE VIE : Fortuneo"), 0, 1)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(80, 5, txt(f"BoursoBank (PEA/Banque)"), 0, 1)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.set_text_color(200, 0, 0)
-    pdf.set_xy(15, y_pos+12)
-    pdf.cell(80, 5, txt(f"CODE : {PARRAINAGE['BoursoBank']['code']}"), 0, 1)
+    pdf.cell(0, 8, txt(f"   CODE : {PARRAINAGE['Fortuneo']['code']}  ({PARRAINAGE['Fortuneo']['prime']})"), 0, 1)
+
+    pdf.ln(10)
     pdf.set_text_color(0, 0, 0)
 
-    # Boite Fortuneo
-    pdf.set_fill_color(245, 255, 245)
-    pdf.rect(105, y_pos, 90, 35, 'F')
-    pdf.set_xy(110, y_pos+5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(80, 5, txt(f"Fortuneo (Assurance Vie)"), 0, 1)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.set_text_color(0, 150, 0)
-    pdf.set_xy(110, y_pos+12)
-    pdf.cell(80, 5, txt(f"CODE : {PARRAINAGE['Fortuneo']['code']}"), 0, 1)
-    pdf.set_text_color(0, 0, 0)
-
-    pdf.ln(40)
-
-    # Allocation & Conseils
+    # Allocation
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, txt("Allocation & Conseils"), 0, 1)
-    pdf.set_font("Arial", '', 10)
-    
+    pdf.cell(0, 10, txt("Répartition de mon argent"), 0, 1)
+    pdf.set_font("Arial", '', 11)
     for k, v in alloc.items():
-        if v > 0:
-            pdf.cell(50, 8, txt(f"{k} : {v}%"), 1, 1)
+        if v > 0: pdf.cell(0, 8, txt(f"- {k} : {v}%"), 0, 1)
 
     pdf.ln(5)
-    for cons in conseils:
-        clean = cons.replace("**", "")
-        pdf.multi_cell(0, 6, txt(f"- {clean}"))
-        pdf.ln(1)
-
+    
+    # Conseils
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, txt("Mes étapes à suivre"), 0, 1)
+    pdf.set_font("Arial", '', 10)
+    for c in conseils:
+        c_clean = nettoyer_texte_pdf(c.replace("**", ""))
+        pdf.multi_cell(0, 6, txt(f"- {c_clean}"))
+        pdf.ln(2)
+        
     return pdf.output(dest='S').encode('latin-1')
 
-# --- INTERFACE ---
-col_title, col_logo = st.columns([4,1])
-with col_title:
-    st.title("🎯 Définissez votre profil d'investisseur")
+# --- 5. INTERFACE UTILISATEUR (QUIZ) ---
+
+st.title("🧙‍♂️ Le Quiz de l'Investisseur")
+st.markdown("Réponds à 4 questions simples pour savoir où placer ton argent.")
+
+# Question 1
+st.subheader("1. Quand auras-tu besoin de cet argent ?")
+q_temps = st.radio("L'horizon de temps est le critère n°1.", 
+    ["Tout de suite (Urgence / Vacances)", 
+     "D'ici 3-5 ans (Achat Immo / Voiture)", 
+     "Dans 10 ans (Projet lointain)", 
+     "Pour la retraite (Dans très longtemps)"], 
+    label_visibility="collapsed")
 
 st.write("---")
 
-c1, c2, c3 = st.columns(3)
-with c1: horizon = st.slider("Horizon (Années)", 1, 35, 10)
-with c2: risk_tol = st.slider("Risque (1 à 10)", 1, 10, 5)
-with c3: montant = st.number_input("Montant (€)", 500, 1000000, 10000)
+# Question 2
+st.subheader("2. Si la bourse s'effondre de -20% demain...")
+q_reaction = st.radio("Ta réaction émotionnelle ?", 
+    ["😱 Je vends tout immédiatement (Panique)", 
+     "😰 Je m'inquiète et je dors mal (Stress)", 
+     "🧘 Je ne fais rien, ça remontera (Zen)", 
+     "🤑 J'en profite pour acheter en solde (Opportunité)"],
+    label_visibility="collapsed")
 
-connaissance = st.radio("Niveau", ["Débutant", "Intermédiaire", "Expert"], horizontal=True)
+st.write("---")
 
-# Calcul Score
-score_risk = risk_tol * 6
-score_horizon = 20 if horizon > 8 else (10 if horizon > 4 else 0)
-score_know = 0 if connaissance == "Débutant" else (10 if connaissance == "Intermédiaire" else 20)
-total_score = score_risk + score_horizon + score_know
+# Question 3
+st.subheader("3. Ton niveau en finance ?")
+q_savoir = st.radio("Sois honnête !", 
+    ["👶 Néophyte (Livret A et c'est tout)", 
+     "🧐 Curieux (Je lis des articles parfois)", 
+     "🧠 Averti (Je sais ce qu'est un ETF ou une Action)"],
+    label_visibility="collapsed")
 
-if st.button("📊 Analyser mon profil", type="primary"):
-    profil, desc, alloc, conseils = obtenir_profil_et_conseils(total_score, horizon)
+st.write("---")
+
+# Question 4
+st.subheader("4. Quel montant souhaites-tu investir ?")
+montant = st.number_input("Montant en €", min_value=100, value=5000, step=100)
+
+st.write("")
+st.write("")
+
+# Bouton Résultat
+if st.button("✨ Découvrir ma stratégie", type="primary"):
+    
+    # Formatage des réponses pour l'algo
+    reponses = {"temps": q_temps, "reaction": q_reaction, "savoir": q_savoir}
+    
+    # Calcul
+    profil, desc, alloc, conseils = calculer_resultats(reponses, montant)
     
     st.divider()
-    res_c1, res_c2 = st.columns([2, 1])
     
-    with res_c1:
-        st.subheader(f"Profil : {profil}")
-        st.info(desc)
-        for c in conseils: st.markdown(f"- {c}")
+    # AFFICHE RÉSULTAT
+    st.markdown(f"<h2 style='text-align: center; color: #ffd700;'>🏆 Tu es : {profil}</h2>", unsafe_allow_html=True)
+    st.info(desc)
+    
+    # Graphique Donut simple
+    labels = [k for k,v in alloc.items() if v > 0]
+    values = [v for k,v in alloc.items() if v > 0]
+    fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.5)])
+    fig.update_layout(margin=dict(t=10,b=10,l=10,r=10), height=250, showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Conseils texte
+    st.subheader("📝 Ton plan d'action")
+    for conseil in conseils:
+        st.write(conseil)
 
-    with res_c2:
-        labels = [k for k,v in alloc.items() if v > 0]
-        values = [v for k,v in alloc.items() if v > 0]
-        fig = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.4)])
-        fig.update_layout(margin=dict(t=0,b=0,l=0,r=0), height=250, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
+    st.write("---")
+    
+    # PARRAINAGE (Mise en forme CSS custom)
+    st.subheader("🎁 Pour commencer : Tes bonus")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"""
+        <div class="parrain-box bourso">
+            <h3>🏦 BoursoBank</h3>
+            <p><strong>Code : {PARRAINAGE['Bourso']['code']}</strong></p>
+            <p>Prime : {PARRAINAGE['Bourso']['prime']}</p>
+            <p style="font-size:12px"><em>{PARRAINAGE['Bourso']['desc']}</em></p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with c2:
+        st.markdown(f"""
+        <div class="parrain-box fortuneo">
+            <h3>🍀 Fortuneo</h3>
+            <p><strong>Code : {PARRAINAGE['Fortuneo']['code']}</strong></p>
+            <p>Prime : {PARRAINAGE['Fortuneo']['prime']}</p>
+            <p style="font-size:12px"><em>{PARRAINAGE['Fortuneo']['desc']}</em></p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Parrainage
-    st.markdown("### 🎁 Vos Avantages")
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        st.info(f"**BoursoBank**\n\nCode: **{PARRAINAGE['BoursoBank']['code']}**\n\n{PARRAINAGE['BoursoBank']['desc']}")
-    with pc2:
-        st.success(f"**Fortuneo**\n\nCode: **{PARRAINAGE['Fortuneo']['code']}**\n\n{PARRAINAGE['Fortuneo']['desc']}")
-
-    pdf_bytes = generer_pdf("Inv", profil, desc, alloc, conseils)
-    st.download_button("📥 Télécharger PDF", data=pdf_bytes, file_name="bilan.pdf", mime="application/pdf")
+    # Bouton PDF
+    pdf_data = creer_pdf(profil, desc, alloc, conseils)
+    st.download_button("📄 Télécharger mon Bilan PDF", data=pdf_data, file_name="mon_profil_investisseur.pdf", mime="application/pdf")
